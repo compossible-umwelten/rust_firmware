@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "umwelten",
+			"path": ".."
+		},
+		{
+			"name": "rust-pico-project-master",
+			"path": "../../../rust-pico-project-master"
+		}
+	],
+	"settings": {}
+}
