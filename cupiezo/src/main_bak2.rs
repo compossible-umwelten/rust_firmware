@@ -45,7 +45,7 @@ fn main() -> ! {
     );
     // cs is on gpio5 for now
     let mut gpio5 = pins.gpio5.into_push_pull_output();
-    gpio5.set_high().unwrap();
+    gpio5.set_low().unwrap();
     let mut gpio6 = pins.gpio6.into_push_pull_output();
     gpio6.set_high().unwrap();
     delay.delay_ms(500);
@@ -89,37 +89,23 @@ fn main() -> ! {
     let low_value_high = (low_value >> 8) as u8;
     let low_value_low = (low_value & 0xFF) as u8;
 
-    // Number of times to alternate between high and low values
-    let repetitions = 10;
+    delay.delay_ms(500);
 
-    // Send the square wave to the FIFO
-    for _ in 0..repetitions {
+    let hello_slave = b"hello slave!";
+    spi.write(hello_slave).unwrap();
+
+    loop {
         // Send high value
         spi.write(&[reference_register_address, high_value_high, high_value_low])
             .unwrap();
         // Delay to maintain the high value for a certain duration (adjust as needed)
-        // delay.delay_ms();
+        delay.delay_ms(500);
 
         // Send low value
         spi.write(&[reference_register_address, low_value_high, low_value_low])
             .unwrap();
         // Delay to maintain the low value for a certain duration (adjust as needed)
-        // delay.delay_ms();
-    }
-
-    // After sending the square wave, send the stabilization value
-    let stabilization_value: u16 = 0x0FFF; // Small negative voltage
-    let stabilization_value_high = (stabilization_value >> 8) as u8;
-    let stabilization_value_low = (stabilization_value & 0xFF) as u8;
-    spi.write(&[
-        reference_register_address,
-        stabilization_value_high,
-        stabilization_value_low,
-    ])
-    .unwrap();
-
-    loop {
-        cortex_m::asm::wfi();
+        delay.delay_ms(500);
     }
 }
 
