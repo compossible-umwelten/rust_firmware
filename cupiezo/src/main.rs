@@ -1,131 +1,120 @@
 #![no_std]
 #![no_main]
-use defmt::*;
-use defmt_rtt as _;
-use embedded_hal::{digital::v2::OutputPin, prelude::_embedded_hal_blocking_spi_Write};
-use fugit::RateExtU32;
-use panic_probe as _;
-use rp2040_hal as hal;
 
-use hal::clocks::Clock;
+#[rtic::app(
+    device = arduino_nano_connect::hal::pac,
+    dispatchers = [TIMER_IRQ_1]
+)]
+mod app {
+    use arduino_nano_connect::hal;
+    use hal::{
+        clocks, gpio,
+        gpio::{
+            bank0::{Gpio2, Gpio3, Gpio6},
+            FunctionSio, SioOutput,
+        },
+        pac,
+        sio::Sio,
+        watchdog::Watchdog,
+        I2C,
+    };
+    use arduino_nano_connect::XOSC_CRYSTAL_FREQ;
+    use rp2040_monotonic::{
+        fugit::Duration,
+        // fugit::RateExtU32, // For .kHz() conversion funcs
+        Rp2040Monotonic,
+    };
 
-#[link_section = ".boot2"]
-#[used]
-pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
-// for some reason this bootloader is not working for arduino rp2040 connect.
-// pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GENERIC_03H;
+    use core::mem::MaybeUninit;
+    use embedded_hal::digital::v2::ToggleableOutputPin;
 
-#[cortex_m_rt::entry]
-fn main() -> ! {
-    info!("Program start");
-    let mut pac = hal::pac::Peripherals::take().unwrap();
-    let core = hal::pac::CorePeripherals::take().unwrap();
-    let mut watchdog = hal::watchdog::Watchdog::new(pac.WATCHDOG);
-    let clocks = hal::clocks::init_clocks_and_plls(
-        12_000_000u32,
-        pac.XOSC,
-        pac.CLOCKS,
-        pac.PLL_SYS,
-        pac.PLL_USB,
-        &mut pac.RESETS,
-        &mut watchdog,
-    )
-    .ok()
-    .unwrap();
+    use panic_probe as _;
 
-    let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());
+    const MONO_NUM: u32 = 1;
+    const MONO_DENOM: u32 = 1000000;
+    const ONE_SEC_TICKS: u64 = 1000000;
 
-    let sio = hal::Sio::new(pac.SIO);
+    type I2CBus = I2C<
+        pac::I2C1,
+        (
+            gpio::Pin<Gpio2, gpio::FunctionI2C, gpio::PullDown>,
+            gpio::Pin<Gpio3, gpio::FunctionI2C, gpio::PullDown>,
+        ),
+    >;
 
-    let pins = hal::gpio::Pins::new(
-        pac.IO_BANK0,
-        pac.PADS_BANK0,
-        sio.gpio_bank0,
-        &mut pac.RESETS,
-    );
-    // cs is on gpio5 for now
-    let mut gpio5 = pins.gpio5.into_push_pull_output();
-    gpio5.set_high().unwrap();
-    let mut gpio6 = pins.gpio6.into_push_pull_output();
-    gpio6.set_high().unwrap();
-    delay.delay_ms(500);
-    let mosi = pins.gpio7.into_function::<hal::gpio::FunctionSpi>();
-    let miso = pins.gpio4.into_function::<hal::gpio::FunctionSpi>();
-    let sclk = gpio6.into_function::<hal::gpio::FunctionSpi>();
-    // let spi = hal::spi::Spi::new(pac.SPI0, (mosi, miso, sclk));
-    let spi = hal::spi::Spi::<_, _, _, 8>::new(pac.SPI0, (mosi, miso, sclk));
-    // Exchange the uninitialised SPI driver for an initialised one
-    let mut spi = spi.init(
-        &mut pac.RESETS,
-        clocks.peripheral_clock.freq(),
-        16u32.MHz(),
-        embedded_hal::spi::MODE_0,
-    );
+    #[monotonic(binds = TIMER_IRQ_0, default = true)]
+    type Rp2040Mono = Rp2040Monotonic;
 
-    // Reset the BOS1901
-    let config_register_address = 0x05; // Address of the CONFIG register
-    let reset_value = 0x1 << 5; // Set the RST bit
-    spi.write(&[config_register_address, reset_value]).unwrap();
+    #[shared]
+    struct Shared {}
 
-    // Enable the Output
-    let output_enable_value = 0x1 << 4; // Set the OE bit
-    spi.write(&[config_register_address, output_enable_value])
-        .unwrap();
-
-    let sup_rise_register_address = 0x7; // Address of the SUP_RISE register
-    let sense_bit_value = 0x0; // Value to set the SENSE bit to 0
-    spi.write(&[sup_rise_register_address, sense_bit_value])
-        .unwrap();
-
-    // Example: Sending a sample to the BOS1901's FIFO
-    let reference_register_address = 0x00; // Based on the document
-                                           // Define the high and low values for the square wave
-    let high_value: u16 = 0xFFF;
-    let low_value: u16 = 0x000;
-
-    // Split the values into two u8 values for SPI transmission
-    let high_value_high = (high_value >> 8) as u8;
-    let high_value_low = (high_value & 0xFF) as u8;
-    let low_value_high = (low_value >> 8) as u8;
-    let low_value_low = (low_value & 0xFF) as u8;
-
-    // Number of times to alternate between high and low values
-    let repetitions = 10;
-
-    // Send the square wave to the FIFO
-    for _ in 0..repetitions {
-        // Send high value
-        spi.write(&[reference_register_address, high_value_high, high_value_low])
-            .unwrap();
-        // Delay to maintain the high value for a certain duration (adjust as needed)
-        // delay.delay_ms();
-
-        // Send low value
-        spi.write(&[reference_register_address, low_value_high, low_value_low])
-            .unwrap();
-        // Delay to maintain the low value for a certain duration (adjust as needed)
-        // delay.delay_ms();
+    #[local]
+    struct Local {
+        led: gpio::Pin<Gpio6, FunctionSio<SioOutput>, gpio::PullDown>,
+        // i2c: &'static mut I2CBus,
     }
 
-    // After sending the square wave, send the stabilization value
-    let stabilization_value: u16 = 0x0FFF; // Small negative voltage
-    let stabilization_value_high = (stabilization_value >> 8) as u8;
-    let stabilization_value_low = (stabilization_value & 0xFF) as u8;
-    spi.write(&[
-        reference_register_address,
-        stabilization_value_high,
-        stabilization_value_low,
-    ])
-    .unwrap();
+    #[init(local=[
+        // Task local initialized resources are static
+        // Here we use MaybeUninit to allow for initialization in init()
+        // This enables its usage in driver initialization
+        i2c_ctx: MaybeUninit<I2CBus> = MaybeUninit::uninit()
+    ])]
+    fn init(mut ctx: init::Context) -> (Shared, Local, init::Monotonics) {
+        // Configure the clocks, watchdog - The default is to generate a 125 MHz system clock
+        let mut watchdog = Watchdog::new(ctx.device.WATCHDOG);
+        let clocks = clocks::init_clocks_and_plls(
+            XOSC_CRYSTAL_FREQ,
+            ctx.device.XOSC,
+            ctx.device.CLOCKS,
+            ctx.device.PLL_SYS,
+            ctx.device.PLL_USB,
+            &mut ctx.device.RESETS,
+            &mut watchdog,
+        )
+        .ok()
+        .unwrap();
 
-    loop {
-        cortex_m::asm::wfi();
+        // Init LED pin
+        let sio = Sio::new(ctx.device.SIO);
+        let gpioa = arduino_nano_connect::Pins::new(
+            ctx.device.IO_BANK0,
+            ctx.device.PADS_BANK0,
+            sio.gpio_bank0,
+            &mut ctx.device.RESETS,
+        );
+        // led.set_low().unwrap();
+
+        // Init I2C pins
+        // let miso = gpioa.cipo.into_function::<gpio::FunctionSpi>();
+        // let mosi = gpioa.copi.into_function::<gpio::FunctionSpi>();
+        // let sclk = gpioa.sck0.into_function::<gpio::FunctionSpi>();
+        // let spi = hal::spi::Spi::<_, _, _, 8>::new(pac.SPI0, (mosi, miso, sclk));
+        let led = gpioa.sck0.into_push_pull_output();
+        let mono = Rp2040Mono::new(ctx.device.TIMER);
+
+        // Spawn heartbeat task
+        heartbeat::spawn().unwrap();
+
+        // Return resources and timer
+        (
+            Shared {},
+            // Local { led, i2c: i2c_tmp },
+            Local { led },
+            init::Monotonics(mono),
+        )
     }
-}
 
-struct Critical;
-critical_section::set_impl!(Critical);
-unsafe impl critical_section::Impl for Critical {
-    unsafe fn acquire() -> critical_section::RawRestoreState {}
-    unsafe fn release(_restore_state: critical_section::RawRestoreState) {}
+    #[task(local = [led])]
+    fn heartbeat(ctx: heartbeat::Context) {
+        // Flicker the built-in LED
+        _ = ctx.local.led.toggle();
+
+        // Congrats, you can use your i2c and have access to it here,
+        // now to do something with it!
+
+        // Re-spawn this task after 1 second
+        let one_second = Duration::<u64, MONO_NUM, MONO_DENOM>::from_ticks(ONE_SEC_TICKS);
+        heartbeat::spawn_after(one_second).unwrap();
+    }
 }

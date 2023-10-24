@@ -65,26 +65,20 @@ class ESPMaster {
   void writeData(const char *data) { writeData((uint8_t *)data, strlen(data)); }
 };
 
-ESPMaster esp(SS);
-
-void send(const char *message) {
-  Serial.print("Master: ");
-  Serial.println(message);
-  esp.writeData(message);
-  delay(10);
-  Serial.print("Slave: ");
-  Serial.println(esp.readData());
-  Serial.println();
-}
+ESPMaster spi(SS);
 
 void setup() {
   Serial.begin(115200);
   SPI.begin();
-  esp.begin();
-  delay(1000);
-  send("Hello Slave!");
+  spi.begin();
 }
 
 void loop() {
-  send("Are you alive?");
+  Serial.print("Master: ");
+  Serial.println("hello");
+  spi.writeData("hello");
+  // delay(10);
+  // Serial.print("Slave: ");
+  // Serial.println(spi.readData());
+  Serial.println();
 }

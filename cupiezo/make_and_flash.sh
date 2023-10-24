@@ -12,6 +12,7 @@ DISK=/dev/disk/by-id/usb-RPI_RP2_E0C912952D54-0:0-part1
 while true; do
   echo Waiting for rp2040
   while [ ! -e $DISK ]; do
+    sudo true # prevent password ask timeout
     sleep 1
   done
   sudo umount /mnt

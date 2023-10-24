@@ -1,0 +1,23 @@
+ESP_ROOT  = /c/esp/esp8266-3.1.2
+COMP_PATH = /opt/esp-open-sdk/xtensa-lx106-elf-10.3.0
+SKETCH = ./bos1901.cpp
+# F_CPU = 80000000L
+F_CPU = 160000000L
+UPLOAD_PORT = /dev/ttyUSB0
+CHIP = esp8266
+BOARD = generic
+BUILD_ROOT ?= ./build
+UPLOAD_SPEED = 3000000
+UPLOAD_SPEED = 921600 #max baud of cp2102
+MONITOR_SPEED = 115200
+FLASH_DEF=4M2M
+# FS_TYPE=spiffs
+FS_TYPE=littlefs
+FS_DIR=./data
+# LD_EXTRA="-B/usr/bin/mold"
+
+LIB_DIR=/c/esp/libraries
+ESP_LIB=$(ESP_ROOT)/libraries
+LIBS += $(ESP_LIB)/SPI/
+LIBS += $(ESP_LIB)/SPISlave/
+include /c/esp/makescript/makeEspArduino.mk
