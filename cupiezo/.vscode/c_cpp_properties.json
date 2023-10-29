@@ -1,0 +1,20 @@
+{
+  "configurations": [
+    {
+      "name": "Linux",
+      "includePath": [
+        "/c/esp/esp8266-3.1.2/**",
+        "${workspaceFolder}/**"
+      ],
+      "defines": [
+        "ARCH_ESP8266",
+        "F_CPU=160000000L"
+      ],
+      "compilerPath": "/opt/esp-open-sdk/xtensa-lx106-elf/bin/xtensa-lx106-elf-gcc",
+      "cStandard": "c11",
+      "cppStandard": "c++17",
+      "intelliSenseMode": "gcc-x86"
+    }
+  ],
+  "version": 4
+}
