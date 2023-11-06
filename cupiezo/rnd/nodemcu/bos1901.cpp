@@ -42,9 +42,6 @@ uint16_t spiReadWriteReg(uint16_t data) {
   return ret;
 }
 
-int16_t offset = 0;
-uint16_t counter = 0;
-
 class Config {
  private:
   /*
@@ -78,6 +75,33 @@ class Config {
   uint16_t send() { return spiReadWriteReg(config); }
 };
 
+class SupRise {
+ private:
+  /*
+    +----+----+----+----+----+----+----+----+----+----+----+----+
+    | 11 | 10 |  9 |  8 |  7 |  6 |  5 |  4 |  3 |  2 |  1 |  0 |
+    +----+----+----+----+----+----+----+----+----+----+----+----+
+    |SNSE|VDD                          |TI_RISE                 |
+    +----+----+----+----+----+----+----+----+----+----+----+----+
+  */
+  uint16_t sup_rise = REG_SUP_RISE << 12;
+
+ public:
+  void enable_sense /*----*/ () { sup_rise |= 0x1 << 11; }
+  void disable_sense /*---*/ () { sup_rise &= ~(0x1 << 11); }
+  void set_vdd(uint16_t value) {
+    value &= 0x3F;             // keep only 6 bits
+    sup_rise &= ~(0x3F << 5);  // clear existing bits
+    sup_rise |= value << 5;
+  }
+  void set_ti_rise(uint16_t value) {
+    value &= 0x1F;        // keep only 5 bits
+    sup_rise &= ~(0x1F);  // clear existing bits
+    sup_rise |= value;
+  }
+  uint16_t send() { return spiReadWriteReg(sup_rise); }
+};
+
 Config config;
 
 void drivingInit() {
@@ -100,11 +124,8 @@ void drivingInit() {
   spiReadWriteReg(0xC000);
 
   // Set SENSE = 0 & VDD = 31 (5V supply), TI_RISE = default
-  spiReadWriteReg(0x77E7);
-  spiReadWriteReg(REFERENCE_ZERO);
-  delay(50);
-  uint16_t reg_read = spiReadWriteReg(REFERENCE_ZERO);
-  offset = reg_read & REG_READ_VFEEDBACK_MASK;
+  // spiReadWriteReg(0x77E7);
+  // spiReadWriteReg(REFERENCE_ZERO);
 }
 
 #define REFERENCE_PLUS_1LSB 0x0001
@@ -116,77 +137,53 @@ void drivingPressSetup() {
   // drivingNextState();              // go to next phase
 }
 
-#define PRESS_THRESHOLD 12   // in LSBs of VFEEDBACK
-#define PRESS_HOLD_TIME 180  // Cycles of 125us (8kHz)
-void drivingPress() {
-  int16_t vfeedback =
-      spiReadWriteReg(REFERENCE_PLUS_1LSB) &
-      REG_READ_VFEEDBACK_MASK;          // Write 0x0001 and read VFEEDBACK
-  int16_t vsense = vfeedback - offset;  // subtract the ADC offset value
-  if (vsense >= PRESS_THRESHOLD) {      // compare to threshold
-    counter++;  // increase counter value to implement hold time check
-    if (counter >= PRESS_HOLD_TIME) {  // detection successful
-      counter = 0;                     // reset counter
-      // drivingNextState();              // go to next phase
-    }
-  }
-}
-
-#define PRESS_SIGNAL_FREQ 180  // Hertz
-#define SAMPLING_RATE \
-  8000  // Hertz, defined by PLAY parameter in CONFIG register
+#define PRESS_SIGNAL_FREQ 180      // Hertz
+#define SAMPLING_RATE 8000         // Hertz, defined by CONFIG.PLAY register
 #define SIGNAL_SIZE_MAX 256        // Maximum table size
 #define PRESS_SIGNAL_VOLTAGE 60    // Volts
 #define RELEASE_SIGNAL_VOLTAGE 45  // Volts
 #define RELEASE_SIGNAL_FREQ 180    // Hertz
-static uint16_t
-    press_waveform[SIGNAL_SIZE_MAX];  // Press feedback waveform data points
-static uint16_t press_waveform_size =
-    0;  // Press feedback waveform number of data points
-static uint16_t
-    release_waveform[SIGNAL_SIZE_MAX];  // Release feedback waveform data points
-static uint16_t release_waveform_size =
-    0;  // Release feedback waveform number of data points
-int16_t utilsVolt2Amplitude(float volt) {
-  int16_t amplitude = volt * 2047 / 3.6 / 31;
-  return amplitude;
-}
+
+static uint16_t press_waveform[SIGNAL_SIZE_MAX];
+static uint16_t press_waveform_size = 0;
+static uint16_t release_waveform[SIGNAL_SIZE_MAX];
+static uint16_t release_waveform_size = 0;
+
+int16_t volt2Amplitude(float volt) { return volt * 2047 / 3.6 / 31; }
 
 // Calculate Press and Release Feedback Waveforms
 void drivingCalculateWaveforms(void) {
   // Press Feedback Waveform : single sine pulse
   press_waveform_size = SAMPLING_RATE / PRESS_SIGNAL_FREQ;
-  for (uint8_t i = 0; i < press_waveform_size; i++) {
-    press_waveform[i] = utilsVolt2Amplitude(
-        PRESS_SIGNAL_VOLTAGE / 2 *
-        (sin(2 * PI * i / (press_waveform_size)-PI / 2) + 1));
+  for (uint16_t i = 0; i < press_waveform_size; i++) {
+    float volt = PRESS_SIGNAL_VOLTAGE / 2 *
+                 (sin(2 * PI * i / press_waveform_size - PI / 2) + 1);
+    press_waveform[i] = volt2Amplitude(volt);
   }
 
   // Release Feedback Waveform : single sine pulse
   release_waveform_size = SAMPLING_RATE / RELEASE_SIGNAL_FREQ;
-  for (uint8_t i = 0; i < release_waveform_size; i++) {
-    release_waveform[i] = utilsVolt2Amplitude(
-        RELEASE_SIGNAL_VOLTAGE / 2 *
-        (sin(2 * PI * i / (release_waveform_size)-PI / 2) + 1));
+  for (uint16_t i = 0; i < release_waveform_size; i++) {
+    float volt = RELEASE_SIGNAL_VOLTAGE / 2 *
+                 (sin(2 * PI * i / release_waveform_size - PI / 2) + 1);
+    release_waveform[i] = volt2Amplitude(volt);
   }
 }
 
 void drivingWaitFifoEmpty() {
-  bool fifoempty = 0;
-  // Set up broadcast to read IC_STATUS
-  spiReadWriteReg(0x5617);  // Set BC = IC_STATUS
-
-  // loop until FIFO is empty
-  while (!fifoempty) {
-    delayMicroseconds(1E6 / SAMPLING_RATE / 2);  // wait half a PLAY period.
-    uint16_t ic_status_reg =
-        SPI.transfer16(0xC000);  // dummy write, get IC_STATUS value
-    uint8_t lsb = ic_status_reg & 0xFF;
-    uint8_t msb = (ic_status_reg >> 8) & 0xFF;
-    Serial.printf("< %0.4x =", ic_status_reg);
-    Serial.printf(" %x | %s", msb >> 4, bit_rep[msb & 0x0F]);
-    Serial.printf(" %s %s\n", bit_rep[lsb >> 4], bit_rep[lsb & 0x0F]);
-    fifoempty = (ic_status_reg >> 6) & 0x1;  // extract EMPTY value.
+  SPI.transfer16(0x5617);  // Set BC = IC_STATUS
+  while (true) {
+    yield();
+    delayMicroseconds(1E6 / SAMPLING_RATE / 2);
+    // dummy write, get IC_STATUS value
+    uint16_t ic_status_reg = SPI.transfer16(0x5617);
+    // uint8_t lsb = ic_status_reg & 0xFF;
+    // uint8_t msb = (ic_status_reg >> 8) & 0xFF;
+    // Serial.printf("< %0.4x =", ic_status_reg);
+    // Serial.printf(" %x | %s", msb >> 4, bit_rep[msb & 0x0F]);
+    // Serial.printf(" %s %s\n", bit_rep[lsb >> 4], bit_rep[lsb & 0x0F]);
+    bool fifoempty = (ic_status_reg >> 6) & 0x1;  // extract EMPTY value.
+    if (fifoempty) break;
   }
 }
 
@@ -203,19 +200,40 @@ void setup() {
   drivingCalculateWaveforms();
 }
 
+bool pressed = false;
+void sensing_loop();
 void loop() {
-  // for (int i = 0; i < press_waveform_size; i++) {
-  //   SPI.transfer16(press_waveform[i]);
-  // }
-  // for (int i = 0; i < release_waveform_size; i++) {
-  //   SPI.transfer16(release_waveform[i]);
-  // }
-  // drivingWaitFifoEmpty();
+  SPI.transfer16(0x77E7);  // set SENSE = 0
+  SPI.transfer16(0x5617);  // BC = IC_STATUS
+  for (uint16_t i = 0; i < press_waveform_size; i++) {
+    uint16_t ret = SPI.transfer16(press_waveform[i]);
+    bool full = (ret >> 7) & 0x1;
+    if (full) return;
+  }
+  for (uint16_t i = 0; i < release_waveform_size; i++) {
+    uint16_t ret = SPI.transfer16(release_waveform[i]);
+    // bool full = (ret >> 7) & 0x1;
+    // if (full) drivingWaitFifoEmpty();
+  }
+  drivingWaitFifoEmpty();
+}
 
+void sensing_loop() {
+  // lower 10 bits are vfeedback
+  // upper 2 bits are state
   uint16_t ret = SPI.transfer16(0xD000);  // dummy write
+  // extract 10 bit
+  uint16_t vfeedback = ret & 0x3FF;
   uint8_t lsb = ret & 0xFF;
   uint8_t msb = (ret >> 8) & 0xFF;
+  // if (vsense < 40) {
+  //   pressed = false;
+  //   Serial.printf("< RELEASED\n", ret);
+  //   return;
+  // }
+  pressed = true;
   Serial.printf("< %0.4x =", ret);
   Serial.printf(" %x | %s", msb >> 4, bit_rep[msb & 0x0F]);
-  Serial.printf(" %s %s\n", bit_rep[lsb >> 4], bit_rep[lsb & 0x0F]);
+  Serial.printf(" %s %s pressure:%d\n", bit_rep[lsb >> 4], bit_rep[lsb & 0x0F],
+                vfeedback);
 }
