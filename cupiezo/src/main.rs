@@ -7,6 +7,7 @@
 )]
 mod app {
     use arduino_nano_connect::hal;
+    use arduino_nano_connect::XOSC_CRYSTAL_FREQ;
     use hal::{
         clocks, gpio,
         gpio::{
@@ -18,7 +19,6 @@ mod app {
         watchdog::Watchdog,
         I2C,
     };
-    use arduino_nano_connect::XOSC_CRYSTAL_FREQ;
     use rp2040_monotonic::{
         fugit::Duration,
         // fugit::RateExtU32, // For .kHz() conversion funcs
